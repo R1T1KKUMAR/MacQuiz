@@ -1,4 +1,4 @@
-"# QuizzApp-RBMI
+# QuizzApp-RBMI
 
 A comprehensive Quiz Application with Role-Based Management Interface built with React (Frontend) and FastAPI (Backend).
 
