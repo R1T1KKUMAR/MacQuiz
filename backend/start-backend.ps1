@@ -26,4 +26,4 @@ if (Test-Path ".\\venv312\\Scripts\\python.exe") {
 	$pythonExe = "python"
 }
 
-& $pythonExe -m uvicorn app.main:app --host 0.0.0.0 --port 8000
+& $pythonExe -m uvicorn app.main:socket_app --host 0.0.0.0 --port 8000

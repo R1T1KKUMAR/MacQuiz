@@ -95,7 +95,13 @@ function cloneJsonData(data) {
     }
 }
 
-function normalizeServerDateStrings(value) {
+// Backend stores datetimes as UTC-naive strings (no timezone suffix), but
+// `new Date('2026-07-03T15:15:13')` parses as LOCAL time. That shifts every
+// schedule by the UTC offset (e.g. +5:30 on IST), making live sessions look
+// already ended. Tag naive datetime strings as UTC so parsing is correct.
+const NAIVE_ISO_DATETIME_REGEX = /^\d{4}-\d{2}-\d{2}T\d{2}:\d{2}(?::\d{2}(?:\.\d+)?)?$/;
+
+export function normalizeServerDateStrings(value) {
     if (value === null || value === undefined) return value;
 
     if (Array.isArray(value)) {
@@ -108,6 +114,10 @@ function normalizeServerDateStrings(value) {
             normalized[key] = normalizeServerDateStrings(nestedValue);
         }
         return normalized;
+    }
+
+    if (typeof value === 'string' && NAIVE_ISO_DATETIME_REGEX.test(value)) {
+        return `${value}Z`;
     }
 
     return value;

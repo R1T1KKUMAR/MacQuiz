@@ -1,11 +1,14 @@
+import asyncio
 from fastapi import FastAPI
 from fastapi.middleware.cors import CORSMiddleware
 from fastapi.middleware.gzip import GZipMiddleware
 from contextlib import asynccontextmanager
 import logging
+import socketio
 from sqlalchemy import inspect, text
 from sqlalchemy.exc import IntegrityError
 from app.core.config import settings
+from app.core.live import sio, register_event_loop
 from app.db.database import engine, Base, SessionLocal
 from app.models.models import User
 from app.core.security import get_password_hash, verify_password
@@ -94,6 +97,7 @@ def init_admin() -> None:
 @asynccontextmanager
 async def lifespan(app: FastAPI):
     # Startup
+    register_event_loop(asyncio.get_running_loop())
     app.state.db_startup_ok = True
     app.state.db_startup_error = None
     try:
@@ -181,3 +185,9 @@ async def health_check():
         "database": "connected" if getattr(app.state, "db_startup_ok", True) else "unavailable",
         "startup_error": getattr(app.state, "db_startup_error", None),
     }
+
+
+# Combined ASGI app: Socket.IO handles /socket.io, everything else goes to FastAPI.
+# Serve this (app.main:socket_app) with uvicorn; Vercel keeps importing `app`
+# since its serverless runtime cannot hold WebSocket connections anyway.
+socket_app = socketio.ASGIApp(sio, other_asgi_app=app, socketio_path="/socket.io")

@@ -59,4 +59,5 @@ echo -e "${GREEN}Server will start at: http://localhost:8000${NC}"
 echo -e "${GREEN}API Docs available at: http://localhost:8000/docs${NC}"
 echo ""
 
-uvicorn app.main:app --reload --host 0.0.0.0 --port 8000
+# socket_app wraps the FastAPI app with the Socket.IO endpoint for live monitoring.
+uvicorn app.main:socket_app --reload --host 0.0.0.0 --port 8000

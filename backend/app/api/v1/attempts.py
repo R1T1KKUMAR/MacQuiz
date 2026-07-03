@@ -1,3 +1,5 @@
+import logging
+
 from fastapi import APIRouter, Depends, HTTPException, status, Query
 from sqlalchemy.orm import Session
 from sqlalchemy import func, case
@@ -10,6 +12,9 @@ from app.schemas.schemas import (
     AnswerProgressBatchSave, DashboardStats, ActivityItem
 )
 from app.core.deps import get_current_active_user, require_role
+from app.core.live import emit_attempt_event
+
+logger = logging.getLogger(__name__)
 
 router = APIRouter()
 
@@ -115,6 +120,8 @@ def _finalize_expired_attempt(db: Session, attempt: QuizAttempt, quiz: Quiz, now
     attempt.is_graded = True
 
     db.commit()
+    # Covers every finalization path (expiry sweep, kick-out) in one place.
+    _broadcast_attempt_event("attempt_submitted", db, attempt, quiz)
 
 
 def _is_attempt_expired(attempt: QuizAttempt, quiz: Quiz, now: datetime) -> bool:
@@ -124,6 +131,126 @@ def _is_attempt_expired(attempt: QuizAttempt, quiz: Quiz, now: datetime) -> bool
         deadline = attempt.started_at + timedelta(minutes=quiz.duration_minutes)
         return now > deadline
     return False
+
+
+def _live_attempt_snapshot(db: Session, attempt: QuizAttempt, quiz: Optional[Quiz] = None) -> Optional[dict]:
+    """Build the same row shape as /all-attempts for a single attempt.
+
+    Returns None for non-student attempts (teacher/admin previews) so they
+    never reach the live monitor.
+    """
+    quiz = quiz or db.query(Quiz).filter(Quiz.id == attempt.quiz_id).first()
+    student = db.query(User).filter(User.id == attempt.student_id).first()
+    if not quiz or not student or student.role != "student":
+        return None
+
+    now = datetime.utcnow()
+    question_rows = db.query(
+        Question.id, Question.correct_answer, Question.marks
+    ).filter(Question.quiz_id == quiz.id).all()
+    total_questions = len(question_rows)
+    question_meta = {
+        int(row.id): (_normalized_answer_text(row.correct_answer), float(row.marks or 0))
+        for row in question_rows
+    }
+
+    answered_count = 0
+    correct_answers = 0
+    incorrect_answers = 0
+    live_score = 0.0
+    answer_rows = db.query(Answer.question_id, Answer.answer_text).filter(
+        Answer.attempt_id == attempt.id
+    ).all()
+    for row in answer_rows:
+        normalized_answer = _normalized_answer_text(row.answer_text)
+        if not normalized_answer:
+            continue
+        meta = question_meta.get(int(row.question_id))
+        if not meta:
+            continue
+        answered_count += 1
+        correct_answer, marks = meta
+        if normalized_answer == correct_answer:
+            correct_answers += 1
+            live_score += marks
+        else:
+            incorrect_answers += 1
+            live_score -= float(quiz.negative_marking or 0)
+
+    live_score = max(0.0, live_score)
+    quiz_total_marks_value = (
+        float(quiz.total_marks) if quiz.total_marks is not None else float(attempt.total_marks)
+    )
+    live_percentage = (live_score / quiz_total_marks_value * 100.0) if quiz_total_marks_value > 0 else 0.0
+
+    remaining_seconds = None
+    elapsed_seconds = None
+    if not attempt.is_completed:
+        if quiz.is_live_session and quiz.live_end_time:
+            remaining_seconds = max(0, int(_naive_datetime_remaining_seconds(quiz.live_end_time)))
+        elif quiz.duration_minutes and attempt.started_at:
+            deadline = attempt.started_at + timedelta(minutes=quiz.duration_minutes)
+            remaining_seconds = max(0, int((deadline - now).total_seconds()))
+
+    if attempt.is_completed and attempt.time_taken_minutes is not None:
+        elapsed_seconds = max(0, int(float(attempt.time_taken_minutes) * 60))
+    elif attempt.started_at:
+        if remaining_seconds is not None and quiz.duration_minutes:
+            elapsed_seconds = max(0, int(float(quiz.duration_minutes) * 60) - int(remaining_seconds))
+        else:
+            elapsed_seconds = max(0, int(_naive_datetime_elapsed_seconds(attempt.started_at)))
+
+    if attempt.is_completed:
+        status_value = "completed"
+    elif remaining_seconds is not None and remaining_seconds <= 0:
+        status_value = "expired"
+    else:
+        status_value = "in_progress"
+
+    progress_percentage = round((answered_count / total_questions) * 100, 2) if total_questions > 0 else 0.0
+
+    return {
+        "id": attempt.id,
+        "quiz_id": attempt.quiz_id,
+        "student_id": attempt.student_id,
+        "student_name": f"{student.first_name} {student.last_name}",
+        "student_email": student.email,
+        "score": float(attempt.score) if attempt.score is not None else None,
+        "total_marks": float(attempt.total_marks),
+        "percentage": float(attempt.percentage) if attempt.percentage is not None else None,
+        "started_at": attempt.started_at.isoformat() if attempt.started_at else None,
+        "submitted_at": attempt.submitted_at.isoformat() if attempt.submitted_at else None,
+        "time_taken_minutes": _safe_minutes_value(attempt.time_taken_minutes),
+        "is_completed": bool(attempt.is_completed),
+        "is_graded": bool(attempt.is_graded),
+        "quiz_title": quiz.title,
+        "quiz_duration_minutes": int(quiz.duration_minutes) if quiz.duration_minutes is not None else None,
+        "correct_answers": correct_answers,
+        "incorrect_answers": incorrect_answers,
+        "answered_count": answered_count,
+        "progress_percentage": progress_percentage,
+        "total_questions": total_questions,
+        "quiz_total_marks": quiz_total_marks_value,
+        "live_score": round(live_score, 2),
+        "live_percentage": round(live_percentage, 2),
+        "time_taken": _format_minutes_seconds(attempt.time_taken_minutes),
+        "remaining_seconds": remaining_seconds,
+        "elapsed_seconds": elapsed_seconds,
+        "status": status_value,
+    }
+
+
+def _broadcast_attempt_event(event: str, db: Session, attempt: QuizAttempt, quiz: Optional[Quiz] = None) -> None:
+    """Push a live snapshot of the attempt to monitoring dashboards."""
+    try:
+        quiz = quiz or db.query(Quiz).filter(Quiz.id == attempt.quiz_id).first()
+        snapshot = _live_attempt_snapshot(db, attempt, quiz)
+        if snapshot is None:
+            return
+        emit_attempt_event(event, snapshot, teacher_id=quiz.creator_id if quiz else None)
+    except Exception:
+        # Live broadcasting must never break the underlying request.
+        logger.exception("Failed to broadcast live attempt event %s", event)
 
 
 def _normalize_student_attempts_for_quiz(
@@ -401,7 +528,9 @@ def start_quiz_attempt(
     db.add(db_attempt)
     db.commit()
     db.refresh(db_attempt)
-    
+
+    _broadcast_attempt_event("attempt_started", db, db_attempt, quiz)
+
     return db_attempt
 
 @router.post("/submit", response_model=QuizAttemptResponse)
@@ -482,6 +611,7 @@ def submit_quiz_attempt(
         attempt.is_graded = True
         db.commit()
         db.refresh(attempt)
+        _broadcast_attempt_event("attempt_submitted", db, attempt, quiz)
         return attempt
     
     for answer_data in submission.answers:
@@ -533,10 +663,12 @@ def submit_quiz_attempt(
     attempt.time_taken_minutes = round(max(0.0, time_taken), 2)
     attempt.is_completed = True
     attempt.is_graded = True
-    
+
     db.commit()
     db.refresh(attempt)
-    
+
+    _broadcast_attempt_event("attempt_submitted", db, attempt, quiz)
+
     return attempt
 
 @router.post("/{attempt_id:int}/save-answer")
@@ -607,6 +739,8 @@ def save_answer_progress(
     
     db.commit()
 
+    _broadcast_attempt_event("attempt_progress", db, attempt)
+
     return {"status": "saved" if normalized_answer else "cleared", "question_id": question_id}
 
 @router.post("/{attempt_id:int}/save-answers")
@@ -676,6 +810,8 @@ def save_answers_progress_batch(
             saved += 1
 
     db.commit()
+
+    _broadcast_attempt_event("attempt_progress", db, attempt)
 
     return {"status": "ok", "saved": saved, "cleared": cleared}
 
@@ -800,6 +936,7 @@ def _kick_out_live_attempt_internal(attempt_id: int, db: Session, current_user: 
 
     now = datetime.utcnow()
     _finalize_expired_attempt(db, attempt, quiz, now)
+    _broadcast_attempt_event("attempt_kicked", db, attempt, quiz)
 
     return {
         "attempt_id": attempt.id,
