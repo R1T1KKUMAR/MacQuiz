@@ -3,6 +3,7 @@ import { useNavigate } from "react-router-dom";
 import {
     GraduationCap, ShieldCheck, Users, BookOpen, BarChart3, Sparkles,
     Upload, Timer, CheckCircle2, ListChecks, ToggleLeft, PenLine, ArrowRight, LogIn,
+    Code2, Server, Layout, Database,
 } from "lucide-react";
 import Logo from "../assets/sdc-logo.png";
 
@@ -81,6 +82,15 @@ const STATS = [
     { value: "3", label: "Role-based views", accent: "from-indigo-500 to-indigo-600" },
     { value: "Instant", label: "Auto scoring", accent: "from-purple-500 to-purple-600" },
     { value: "AI", label: "Smart reports", accent: "from-blue-600 to-indigo-600" },
+];
+
+const BACKEND_TEAM = ["Ritik Kumar", "Devang Pathak", "Vivek Sharma", "Vighnesh Shukla"];
+const FRONTEND_TEAM = ["Dakshita Tiwari", "Anjali Tiwari", "Rohit", "Satyam Diwaker"];
+
+const TECH_STACK = [
+    { icon: Server, label: "Backend", value: "FastAPI", tint: "bg-blue-50 border-blue-100", iconTint: "text-blue-600" },
+    { icon: Layout, label: "Frontend", value: "React", tint: "bg-indigo-50 border-indigo-100", iconTint: "text-indigo-600" },
+    { icon: Database, label: "Database", value: "MySQL / Postgres", tint: "bg-green-50 border-green-100", iconTint: "text-green-600" },
 ];
 
 const FOCUS_RING =
@@ -185,6 +195,9 @@ export default function Landing() {
                         </a>
                         <a href="#capabilities" className={`rounded-md text-sm font-semibold text-gray-600 transition hover:text-blue-600 ${FOCUS_RING}`}>
                             Capabilities
+                        </a>
+                        <a href="#team" className={`rounded-md text-sm font-semibold text-gray-600 transition hover:text-blue-600 ${FOCUS_RING}`}>
+                            Team
                         </a>
                     </nav>
                     <button
@@ -353,6 +366,65 @@ export default function Landing() {
                     </div>
                 </section>
 
+                {/* Team & tech stack (from the SDC dashboard) */}
+                <section id="team" className="mx-auto max-w-7xl scroll-mt-24 px-5 py-16 sm:px-8">
+                    <div className="mx-auto max-w-2xl text-center">
+                        <Eyebrow>The team behind it</Eyebrow>
+                        <h2 className="mt-4 text-3xl font-extrabold tracking-tight text-gray-900 sm:text-4xl">
+                            Crafted by the <GradientText>Software Development Cell</GradientText>
+                        </h2>
+                        <p className="mt-4 text-lg text-gray-600">
+                            MacQuiz is designed and built by student contributors of the SDC.
+                        </p>
+                    </div>
+
+                    <div className="mt-12 grid gap-6 lg:grid-cols-2">
+                        <div className="rounded-2xl border border-gray-100 bg-white p-6 shadow-lg">
+                            <h3 className="mb-4 flex items-center text-lg font-semibold text-gray-900">
+                                <Code2 size={20} className="mr-2 text-blue-600" aria-hidden="true" />
+                                Backend Team
+                            </h3>
+                            <ul className="grid grid-cols-1 gap-2 sm:grid-cols-2">
+                                {BACKEND_TEAM.map((name) => (
+                                    <li key={name} className="rounded-lg bg-blue-50 px-3 py-2 font-medium text-gray-800">
+                                        {name}
+                                    </li>
+                                ))}
+                            </ul>
+                        </div>
+                        <div className="rounded-2xl border border-gray-100 bg-white p-6 shadow-lg">
+                            <h3 className="mb-4 flex items-center text-lg font-semibold text-gray-900">
+                                <Code2 size={20} className="mr-2 text-indigo-600" aria-hidden="true" />
+                                Frontend Team
+                            </h3>
+                            <ul className="grid grid-cols-1 gap-2 sm:grid-cols-2">
+                                {FRONTEND_TEAM.map((name) => (
+                                    <li key={name} className="rounded-lg bg-indigo-50 px-3 py-2 font-medium text-gray-800">
+                                        {name}
+                                    </li>
+                                ))}
+                            </ul>
+                        </div>
+                    </div>
+
+                    <div className="mt-6 rounded-2xl border border-gray-100 bg-white p-6 shadow-lg">
+                        <h3 className="mb-4 text-lg font-semibold text-gray-900">Tech Stack</h3>
+                        <div className="grid grid-cols-1 gap-4 md:grid-cols-3">
+                            {TECH_STACK.map(({ icon: Icon, label, value, tint, iconTint }) => (
+                                <div key={label} className={`flex items-center gap-3 rounded-xl border p-4 ${tint}`}>
+                                    <div className={`flex h-10 w-10 shrink-0 items-center justify-center rounded-lg bg-white shadow-sm ${iconTint}`}>
+                                        <Icon size={20} aria-hidden="true" />
+                                    </div>
+                                    <div>
+                                        <p className="text-sm text-gray-600">{label}</p>
+                                        <p className="text-lg font-semibold text-gray-900">{value}</p>
+                                    </div>
+                                </div>
+                            ))}
+                        </div>
+                    </div>
+                </section>
+
                 {/* CTA banner (mirrors the app's blue -> indigo headers) */}
                 <section className="mx-auto max-w-7xl px-5 py-16 sm:px-8">
                     <div className="relative overflow-hidden rounded-3xl bg-gradient-to-r from-blue-600 to-indigo-600 px-8 py-14 text-center shadow-xl sm:px-16">
@@ -399,6 +471,9 @@ export default function Landing() {
                         </a>
                         <a href="#capabilities" className={`rounded-md text-sm font-medium text-gray-600 transition hover:text-blue-600 ${FOCUS_RING}`}>
                             Capabilities
+                        </a>
+                        <a href="#team" className={`rounded-md text-sm font-medium text-gray-600 transition hover:text-blue-600 ${FOCUS_RING}`}>
+                            Team
                         </a>
                         <button onClick={goLogin} className={`cursor-pointer rounded-md text-sm font-medium text-gray-600 transition hover:text-blue-600 ${FOCUS_RING}`}>
                             Sign In
