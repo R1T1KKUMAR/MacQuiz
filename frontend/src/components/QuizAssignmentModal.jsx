@@ -1,5 +1,5 @@
 import React, { useState, useEffect, useCallback } from 'react';
-import { X, Users, UserCheck, Search, Filter, Check, Calendar, Clock } from 'lucide-react';
+import { X, Users, UserCheck, Search, Filter, Check, Calendar, Clock, Repeat } from 'lucide-react';
 import { userAPI, API_BASE_URL } from '../services/api';
 
 const QuizAssignmentModal = ({ isOpen, quiz, onClose, onSuccess }) => {
@@ -12,6 +12,7 @@ const QuizAssignmentModal = ({ isOpen, quiz, onClose, onSuccess }) => {
     const [filterYear, setFilterYear] = useState('all');
     const [isLiveSession, setIsLiveSession] = useState(false);
     const [liveStartTime, setLiveStartTime] = useState('');
+    const [maxAttempts, setMaxAttempts] = useState(1);
 
     const toLocalDateTimeInput = (value) => {
         if (!value) return '';
@@ -151,7 +152,8 @@ const QuizAssignmentModal = ({ isOpen, quiz, onClose, onSuccess }) => {
             setSearchQuery('');
             setFilterDepartment('all');
             setFilterYear('all');
-            
+            setMaxAttempts(1);
+
             fetchStudents();
             loadAssignedStudents();
             loadLiveSessionSettings();
@@ -160,6 +162,7 @@ const QuizAssignmentModal = ({ isOpen, quiz, onClose, onSuccess }) => {
             setSelectedStudents([]);
             setIsLiveSession(false);
             setLiveStartTime('');
+            setMaxAttempts(1);
         }
     }, [isOpen, quiz, fetchStudents, loadAssignedStudents, loadLiveSessionSettings]);
 
@@ -202,10 +205,12 @@ const QuizAssignmentModal = ({ isOpen, quiz, onClose, onSuccess }) => {
         setIsLoading(true);
         try {
             // Update quiz in backend - activate quiz with live session settings and student assignments
+            const safeMaxAttempts = Math.max(1, parseInt(maxAttempts, 10) || 1);
             const updatePayload = {
                 is_active: true,
                 is_live_session: isLiveSession,
-                assigned_student_ids: selectedStudents  // Send array of selected student IDs
+                assigned_student_ids: selectedStudents,  // Send array of selected student IDs
+                max_attempts: safeMaxAttempts  // Attempts each assigned student may take
             };
 
             if (isLiveSession && liveStartTime) {
@@ -328,6 +333,34 @@ const QuizAssignmentModal = ({ isOpen, quiz, onClose, onSuccess }) => {
                                 Live session is OFF. Quiz will be immediately available after assignment.
                             </p>
                         )}
+                    </div>
+
+                    {/* Attempts allowed */}
+                    <div className="bg-gradient-to-r from-emerald-50 to-teal-50 border-2 border-emerald-200 rounded-xl p-5">
+                        <div className="flex flex-col sm:flex-row sm:items-center sm:justify-between gap-3">
+                            <div className="flex items-center gap-3">
+                                <Repeat size={24} className="text-emerald-600" />
+                                <div>
+                                    <h3 className="font-bold text-gray-900 text-lg">Attempts Allowed</h3>
+                                    <p className="text-sm text-gray-600">How many times each student can take this quiz</p>
+                                </div>
+                            </div>
+                            <div className="flex items-center gap-2">
+                                <label htmlFor="max-attempts" className="text-sm font-semibold text-gray-700">Max attempts</label>
+                                <input
+                                    id="max-attempts"
+                                    type="number"
+                                    min={1}
+                                    value={maxAttempts}
+                                    onChange={(e) => setMaxAttempts(e.target.value)}
+                                    onBlur={() => setMaxAttempts((prev) => Math.max(1, parseInt(prev, 10) || 1))}
+                                    className="w-24 px-4 py-2.5 border-2 border-emerald-200 rounded-lg focus:border-emerald-500 focus:outline-none font-medium text-center"
+                                />
+                            </div>
+                        </div>
+                        <p className="text-xs text-emerald-800 bg-emerald-100 border border-emerald-200 rounded px-3 py-2 mt-3">
+                            Students can retake the quiz up to this many times (set to 1 for a single attempt). Students who already reached this many completed attempts stay blocked until you raise the number.
+                        </p>
                     </div>
 
                     {/* Statistics */}

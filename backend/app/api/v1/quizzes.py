@@ -542,26 +542,23 @@ async def update_quiz(
     
     # Handle student assignments if provided
     assigned_student_ids = update_data.pop('assigned_student_ids', None)
+    # Number of attempts each assigned student may take (teacher-configurable).
+    # Defaults to 1 (single attempt) when the teacher doesn't specify a value.
+    max_attempts = update_data.pop('max_attempts', None)
     if assigned_student_ids is not None:
         from app.models.models import QuizAssignment
         unique_student_ids = list(dict.fromkeys(assigned_student_ids))
+        attempts_allowed = max_attempts if max_attempts and max_attempts >= 1 else 1
 
         # Delete existing assignments
         db.query(QuizAssignment).filter(QuizAssignment.quiz_id == quiz_id).delete()
 
-        # Add new assignments. Grant exactly one fresh attempt per (re)assign by
-        # setting attempts_allowed to (completed attempts so far + 1). A brand new
-        # student gets 1; a student who already completed the quiz gets one more.
+        # Add new assignments, granting each student the configured number of attempts.
         for student_id in unique_student_ids:
-            completed_count = db.query(QuizAttempt).filter(
-                QuizAttempt.quiz_id == quiz_id,
-                QuizAttempt.student_id == student_id,
-                QuizAttempt.is_completed == True,
-            ).count()
             assignment = QuizAssignment(
                 quiz_id=quiz_id,
                 student_id=student_id,
-                attempts_allowed=completed_count + 1,
+                attempts_allowed=attempts_allowed,
             )
             db.add(assignment)
     

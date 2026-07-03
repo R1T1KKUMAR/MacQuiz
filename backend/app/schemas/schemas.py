@@ -204,6 +204,7 @@ class QuizUpdate(BaseModel):
     negative_marking: Optional[float] = None
     is_active: Optional[bool] = None
     assigned_student_ids: Optional[List[int]] = None  # List of student IDs to assign
+    max_attempts: Optional[int] = Field(None, ge=1)  # Attempts each assigned student may take
 
 class QuizResponse(BaseModel):
     id: int

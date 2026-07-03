@@ -85,12 +85,23 @@ def _take(client, student, quiz_id, qid_correct, correct):
     return r.json()
 
 
+def _allowed_in_db(quiz_id, student_id):
+    db = SessionLocal()
+    try:
+        asg = db.query(QuizAssignment).filter(
+            QuizAssignment.quiz_id == quiz_id, QuizAssignment.student_id == student_id).first()
+        return asg.attempts_allowed if asg else None
+    finally:
+        db.close()
+
+
 def run(client, student_id, teacher, student, *, live):
     label = "live" if live else "non-live"
     quiz_id, qid_correct = _make_quiz(client, teacher)
 
-    def assign():
-        payload = {"is_active": True, "is_live_session": live, "assigned_student_ids": [student_id]}
+    def assign(max_attempts):
+        payload = {"is_active": True, "is_live_session": live,
+                   "assigned_student_ids": [student_id], "max_attempts": max_attempts}
         if live:
             payload["live_start_time"] = (datetime.utcnow() - timedelta(seconds=5)).strftime("%Y-%m-%dT%H:%M:%S")
         r = client.put(f"/api/v1/quizzes/{quiz_id}", json=payload, headers=teacher)
@@ -99,20 +110,28 @@ def run(client, student_id, teacher, student, *, live):
     def eligible():
         return client.get(f"/api/v1/quizzes/{quiz_id}/eligibility", headers=student).json()
 
-    assign()
+    # Teacher sets max_attempts = 2: the student can take TWO attempts with no
+    # per-retry reassigning in between.
+    assign(max_attempts=2)
+    check(f"[{label}] attempts_allowed == 2 from teacher setting", _allowed_in_db(quiz_id, student_id) == 2,
+          _allowed_in_db(quiz_id, student_id))
     check(f"[{label}] eligible before first attempt", eligible().get("eligible") is True)
-    a1 = _take(client, student, quiz_id, qid_correct, correct=2)
+    a1 = _take(client, student, quiz_id, qid_correct, correct=2)  # 100%
     check(f"[{label}] first attempt scores 100%", abs(a1["percentage"] - 100.0) < 0.01, a1["percentage"])
 
-    check(f"[{label}] NOT eligible after completing (no reassign)", eligible().get("eligible") is False)
-    r = client.post("/api/v1/attempts/start", json={"quiz_id": quiz_id}, headers=student)
-    check(f"[{label}] start blocked (400) after completing", r.status_code == 400, r.status_code)
-
-    assign()  # reassign grants one fresh attempt
-    check(f"[{label}] eligible again after reassign", eligible().get("eligible") is True)
+    check(f"[{label}] still eligible after 1st (2 allowed, no reassign)", eligible().get("eligible") is True)
     a2 = _take(client, student, quiz_id, qid_correct, correct=1)  # 50%, lower than first
     check(f"[{label}] second attempt scores 50%", abs(a2["percentage"] - 50.0) < 0.01, a2["percentage"])
-    check(f"[{label}] NOT eligible after using the one reattempt", eligible().get("eligible") is False)
+
+    check(f"[{label}] blocked after using both allowed attempts", eligible().get("eligible") is False)
+    r = client.post("/api/v1/attempts/start", json={"quiz_id": quiz_id}, headers=student)
+    check(f"[{label}] start blocked (400) after using all attempts", r.status_code == 400, r.status_code)
+
+    # Raising the limit to 3 unlocks one more attempt with no other change.
+    assign(max_attempts=3)
+    check(f"[{label}] attempts_allowed == 3 after raising the limit", _allowed_in_db(quiz_id, student_id) == 3,
+          _allowed_in_db(quiz_id, student_id))
+    check(f"[{label}] eligible again after raising the limit", eligible().get("eligible") is True)
 
     my = client.get("/api/v1/attempts/my-attempts", headers=student).json()
     completed = [x for x in my if x["is_completed"] and x["quiz_id"] == quiz_id]
@@ -123,13 +142,15 @@ def run(client, student_id, teacher, student, *, live):
     check(f"[{label}] stats average == best (100, not 75/50)",
           abs(stats["average_percentage"] - 100.0) < 0.01, stats["average_percentage"])
 
-    db = SessionLocal()
-    try:
-        asg = db.query(QuizAssignment).filter(
-            QuizAssignment.quiz_id == quiz_id, QuizAssignment.student_id == student_id).first()
-        check(f"[{label}] attempts_allowed == 2 after one reassign", asg.attempts_allowed == 2, asg.attempts_allowed)
-    finally:
-        db.close()
+
+def _check_default_single_attempt(client, student_id, teacher):
+    quiz_id, _ = _make_quiz(client, teacher)
+    r = client.put(f"/api/v1/quizzes/{quiz_id}",
+                   json={"is_active": True, "is_live_session": False,
+                         "assigned_student_ids": [student_id]}, headers=teacher)
+    assert r.status_code == 200, r.text
+    check("[default] omitting max_attempts defaults to 1",
+          _allowed_in_db(quiz_id, student_id) == 1, _allowed_in_db(quiz_id, student_id))
 
 
 def main():
@@ -138,6 +159,7 @@ def main():
     teacher = _login(client, "teacher@t.com")
     student = _login(client, "student@s.com")
 
+    _check_default_single_attempt(client, student_id, teacher)
     run(client, student_id, teacher, student, live=False)
     run(client, student_id, teacher, student, live=True)
 
