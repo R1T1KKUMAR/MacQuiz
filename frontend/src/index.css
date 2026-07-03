@@ -4,3 +4,34 @@
 .hide-password-reveal::-ms-clear {
 	display: none;
 }
+
+/* ---- Landing page motion ---- */
+@keyframes mq-float {
+	0%, 100% { transform: translate3d(0, 0, 0) scale(1); }
+	50% { transform: translate3d(0, -28px, 0) scale(1.06); }
+}
+
+@keyframes mq-float-slow {
+	0%, 100% { transform: translate3d(0, 0, 0) scale(1); }
+	50% { transform: translate3d(18px, 24px, 0) scale(1.08); }
+}
+
+@keyframes mq-fade-up {
+	from { opacity: 0; transform: translateY(28px); }
+	to { opacity: 1; transform: translateY(0); }
+}
+
+.mq-float { animation: mq-float 9s ease-in-out infinite; }
+.mq-float-slow { animation: mq-float-slow 12s ease-in-out infinite; }
+
+.mq-fade-up {
+	opacity: 0;
+	animation: mq-fade-up 0.7s cubic-bezier(0.22, 1, 0.36, 1) forwards;
+}
+
+@media (prefers-reduced-motion: reduce) {
+	.mq-float, .mq-float-slow, .mq-fade-up {
+		animation: none;
+	}
+	.mq-fade-up { opacity: 1; }
+}
