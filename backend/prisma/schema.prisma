@@ -179,6 +179,7 @@ model QuizAssignment {
   quiz_id    Int
   student_id Int
   assigned_at DateTime @default(now())
+  attempts_allowed Int  @default(1)
 
   quiz    Quiz @relation(fields: [quiz_id], references: [id])
   student User @relation("AssignmentStudent", fields: [student_id], references: [id])

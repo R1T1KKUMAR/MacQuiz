@@ -24,6 +24,27 @@ def ensure_user_profile_image_column() -> None:
     with engine.begin() as connection:
         connection.execute(text("ALTER TABLE users ADD COLUMN profile_image TEXT"))
 
+
+def ensure_quiz_assignment_attempts_allowed_column() -> None:
+    """Best-effort schema compatibility for existing databases.
+
+    `create_all` never adds columns to an existing table, so a deploy that
+    introduces `attempts_allowed` would otherwise break every QuizAssignment
+    query until a migration runs. Adding it here makes the column self-healing
+    on startup. Existing rows default to 1 (one attempt, no reattempt).
+    """
+    inspector = inspect(engine)
+    if "quiz_assignments" not in inspector.get_table_names():
+        return
+    columns = {col["name"] for col in inspector.get_columns("quiz_assignments")}
+    if "attempts_allowed" in columns:
+        return
+
+    with engine.begin() as connection:
+        connection.execute(text(
+            "ALTER TABLE quiz_assignments ADD COLUMN attempts_allowed INTEGER NOT NULL DEFAULT 1"
+        ))
+
 def init_admin() -> None:
     """Create the initial admin user if it doesn't exist.
 
@@ -78,6 +99,7 @@ async def lifespan(app: FastAPI):
     try:
         Base.metadata.create_all(bind=engine)
         ensure_user_profile_image_column()
+        ensure_quiz_assignment_attempts_allowed_column()
         init_admin()
     except Exception as error:
         app.state.db_startup_ok = False

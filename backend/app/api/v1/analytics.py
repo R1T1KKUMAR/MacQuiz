@@ -58,6 +58,20 @@ def _build_ai_metrics(
     if request_payload.department:
         completed_attempts = completed_attempts.filter(User.department == request_payload.department)
 
+    # Restrict every metric to each student's best completed attempt per quiz so
+    # granted reattempts don't double-count students or skew averages / pass-rate.
+    from app.api.v1.attempts import best_completed_attempt_ids
+    if request_payload.quiz_id is not None:
+        best_ids = best_completed_attempt_ids(db, quiz_id=request_payload.quiz_id)
+    elif current_user.role == "teacher":
+        teacher_quiz_id_list = [
+            row.id for row in db.query(Quiz.id).filter(Quiz.creator_id == current_user.id).all()
+        ]
+        best_ids = best_completed_attempt_ids(db, quiz_ids=teacher_quiz_id_list)
+    else:
+        best_ids = best_completed_attempt_ids(db)
+    completed_attempts = completed_attempts.filter(QuizAttempt.id.in_(best_ids))
+
     total_completed = completed_attempts.count()
     avg_percentage = completed_attempts.with_entities(func.avg(QuizAttempt.percentage)).scalar() or 0
     avg_score = completed_attempts.with_entities(func.avg(QuizAttempt.score)).scalar() or 0
@@ -387,16 +401,22 @@ def get_teacher_statistics(
         User.role == "student"
     ).scalar() or 0
     
-    # Average quiz score
-    avg_score = db.query(func.avg(QuizAttempt.percentage)).join(
-        Quiz, Quiz.id == QuizAttempt.quiz_id
-    ).join(
-        User, User.id == QuizAttempt.student_id
-    ).filter(
-        Quiz.creator_id == teacher_id,
-        User.role == "student",
-        QuizAttempt.is_completed == True
-    ).scalar() or 0
+    # Average quiz score across each student's best completed attempt per quiz,
+    # so a student's granted reattempts do not skew the teacher's average.
+    from app.api.v1.attempts import best_completed_attempt_ids
+    teacher_quiz_id_list = [
+        row.id for row in db.query(Quiz.id).filter(Quiz.creator_id == teacher_id).all()
+    ]
+    best_ids = best_completed_attempt_ids(db, quiz_ids=teacher_quiz_id_list)
+    if best_ids:
+        avg_score = db.query(func.avg(QuizAttempt.percentage)).join(
+            User, User.id == QuizAttempt.student_id
+        ).filter(
+            QuizAttempt.id.in_(best_ids),
+            User.role == "student"
+        ).scalar() or 0
+    else:
+        avg_score = 0
     
     # Last quiz created
     last_quiz = db.query(Quiz).filter(
@@ -447,38 +467,28 @@ def get_student_statistics(
             detail="Student not found"
         )
     
-    # Total attempts
-    total_attempts = db.query(QuizAttempt).filter(
+    from app.api.v1.attempts import best_completed_attempt_ids
+
+    # Distinct quizzes attempted (each quiz counts once, regardless of retries).
+    total_attempts = db.query(func.count(func.distinct(QuizAttempt.quiz_id))).filter(
         QuizAttempt.student_id == student_id
-    ).count()
-    
-    completed_attempts = db.query(QuizAttempt).filter(
-        QuizAttempt.student_id == student_id,
-        QuizAttempt.is_completed == True
-    ).count()
-    
-    # Average score and percentage
-    avg_score = db.query(func.avg(QuizAttempt.score)).filter(
-        QuizAttempt.student_id == student_id,
-        QuizAttempt.is_completed == True
     ).scalar() or 0
-    
-    avg_percentage = db.query(func.avg(QuizAttempt.percentage)).filter(
-        QuizAttempt.student_id == student_id,
-        QuizAttempt.is_completed == True
-    ).scalar() or 0
-    
-    # Highest and lowest scores
-    highest = db.query(func.max(QuizAttempt.score)).filter(
-        QuizAttempt.student_id == student_id,
-        QuizAttempt.is_completed == True
-    ).scalar() or 0
-    
-    lowest = db.query(func.min(QuizAttempt.score)).filter(
-        QuizAttempt.student_id == student_id,
-        QuizAttempt.is_completed == True,
-        QuizAttempt.score > 0
-    ).scalar() or 0
+
+    # A student's best completed attempt per quiz is authoritative for their
+    # completion count and score aggregates.
+    best_ids = best_completed_attempt_ids(db, student_id=student_id)
+    completed_attempts = len(best_ids)
+
+    if best_ids:
+        best_filter = QuizAttempt.id.in_(best_ids)
+        avg_score = db.query(func.avg(QuizAttempt.score)).filter(best_filter).scalar() or 0
+        avg_percentage = db.query(func.avg(QuizAttempt.percentage)).filter(best_filter).scalar() or 0
+        highest = db.query(func.max(QuizAttempt.score)).filter(best_filter).scalar() or 0
+        lowest = db.query(func.min(QuizAttempt.score)).filter(
+            best_filter, QuizAttempt.score > 0
+        ).scalar() or 0
+    else:
+        avg_score = avg_percentage = highest = lowest = 0
     
     # Last attempt
     last_attempt = db.query(QuizAttempt).filter(
@@ -486,14 +496,17 @@ def get_student_statistics(
     ).order_by(QuizAttempt.started_at.desc()).first()
     
     # Pending quizzes (active quizzes not attempted)
-    attempted_quiz_ids = db.query(QuizAttempt.quiz_id).filter(
-        QuizAttempt.student_id == student_id
-    ).subquery()
-    
-    pending_quizzes = db.query(Quiz).filter(
-        Quiz.is_active == True,
-        ~Quiz.id.in_(attempted_quiz_ids)
-    ).count()
+    attempted_quiz_ids = [
+        row.quiz_id
+        for row in db.query(QuizAttempt.quiz_id).filter(
+            QuizAttempt.student_id == student_id
+        ).distinct().all()
+    ]
+
+    pending_query = db.query(Quiz).filter(Quiz.is_active == True)
+    if attempted_quiz_ids:
+        pending_query = pending_query.filter(~Quiz.id.in_(attempted_quiz_ids))
+    pending_quizzes = pending_query.count()
     
     return {
         "total_quizzes_attempted": total_attempts,

@@ -3575,7 +3575,7 @@ const StudentResultsView = ({ selfOnly = false }) => {
     );
     const expiredAttempts = filteredAttempts.filter(attempt => attempt.status === 'expired');
     const completedAttempts = filteredAttempts.filter(attempt => attempt.is_completed);
-    const latestCompletedAttempts = useMemo(() => {
+    const bestCompletedAttempts = useMemo(() => {
         const byStudentQuiz = new Map();
         for (const attempt of completedAttempts) {
             const key = `${attempt.student_id}-${attempt.quiz_id}`;
@@ -3586,10 +3586,20 @@ const StudentResultsView = ({ selfOnly = false }) => {
                 continue;
             }
 
-            const existingSubmitted = existing.submitted_at ? new Date(existing.submitted_at).getTime() : 0;
-            const currentSubmitted = attempt.submitted_at ? new Date(attempt.submitted_at).getTime() : 0;
-            if (currentSubmitted >= existingSubmitted) {
+            // A student may have several completed attempts once a teacher grants
+            // reattempts. Keep the best-scoring one; break ties by latest submission.
+            const existingScore = toSafeNumber(existing.percentage, -Infinity);
+            const currentScore = toSafeNumber(attempt.percentage, -Infinity);
+            if (currentScore > existingScore) {
                 byStudentQuiz.set(key, attempt);
+                continue;
+            }
+            if (currentScore === existingScore) {
+                const existingSubmitted = existing.submitted_at ? new Date(existing.submitted_at).getTime() : 0;
+                const currentSubmitted = attempt.submitted_at ? new Date(attempt.submitted_at).getTime() : 0;
+                if (currentSubmitted >= existingSubmitted) {
+                    byStudentQuiz.set(key, attempt);
+                }
             }
         }
         return Array.from(byStudentQuiz.values());
@@ -3636,7 +3646,7 @@ const StudentResultsView = ({ selfOnly = false }) => {
     });
 
     const sortedLatestCompletedAttempts = useMemo(() => {
-        const list = [...latestCompletedAttempts];
+        const list = [...bestCompletedAttempts];
         list.sort((a, b) => {
             const submittedA = a?.submitted_at ? new Date(a.submitted_at).getTime() : 0;
             const submittedB = b?.submitted_at ? new Date(b.submitted_at).getTime() : 0;
@@ -3657,8 +3667,8 @@ const StudentResultsView = ({ selfOnly = false }) => {
             return submittedB - submittedA;
         });
         return list;
-    }, [latestCompletedAttempts, resultsSortBy]);
-    const reviewFlagCount = latestCompletedAttempts.filter(
+    }, [bestCompletedAttempts, resultsSortBy]);
+    const reviewFlagCount = bestCompletedAttempts.filter(
         (attempt) => attempt?.needs_review || (Array.isArray(attempt?.sanity_flags) && attempt.sanity_flags.length > 0)
     ).length;
 
@@ -4020,24 +4030,24 @@ const StudentResultsView = ({ selfOnly = false }) => {
             <div className="grid grid-cols-1 md:grid-cols-4 gap-4 mb-6">
                 <div className="bg-blue-50 p-4 rounded-lg">
                     <div className="text-sm text-gray-600">Completed Attempts (Latest)</div>
-                    <div className="text-2xl font-bold text-blue-600">{latestCompletedAttempts.length}</div>
+                    <div className="text-2xl font-bold text-blue-600">{bestCompletedAttempts.length}</div>
                 </div>
                 <div className="bg-green-50 p-4 rounded-lg">
                     <div className="text-sm text-gray-600">Average Score</div>
                     <div className="text-2xl font-bold text-green-600">
-                        {latestCompletedAttempts.length > 0
-                            ? (latestCompletedAttempts.reduce((sum, a) => sum + toSafeNumber(a?.percentage, 0), 0) / latestCompletedAttempts.length).toFixed(1)
+                        {bestCompletedAttempts.length > 0
+                            ? (bestCompletedAttempts.reduce((sum, a) => sum + toSafeNumber(a?.percentage, 0), 0) / bestCompletedAttempts.length).toFixed(1)
                             : '0'}%
                     </div>
                 </div>
                 <div className="bg-yellow-50 p-4 rounded-lg">
                     <div className="text-sm text-gray-600">Pass Rate</div>
                     <div className="text-2xl font-bold text-yellow-600">
-                        {latestCompletedAttempts.length > 0
-                            ? ((latestCompletedAttempts.filter(a => {
+                        {bestCompletedAttempts.length > 0
+                            ? ((bestCompletedAttempts.filter(a => {
                                 const grade = getGradeFromPercentage(toSafeNumber(a?.percentage, 0));
                                 return grade !== 'F' && grade !== 'N/A';
-                            }).length / latestCompletedAttempts.length) * 100).toFixed(1)
+                            }).length / bestCompletedAttempts.length) * 100).toFixed(1)
                             : '0'}%
                     </div>
                 </div>
@@ -4045,8 +4055,8 @@ const StudentResultsView = ({ selfOnly = false }) => {
                     <div className="text-sm text-gray-600">{selfOnly ? 'Completed Attempts' : 'Completed Unique Students'}</div>
                     <div className="text-2xl font-bold text-purple-600">
                         {selfOnly
-                            ? latestCompletedAttempts.length
-                            : new Set(latestCompletedAttempts.map(a => a.student_id)).size}
+                            ? bestCompletedAttempts.length
+                            : new Set(bestCompletedAttempts.map(a => a.student_id)).size}
                     </div>
                 </div>
             </div>
@@ -4303,27 +4313,30 @@ const StudentUnifiedView = ({ activeTab, user, profileImage, onPickProfileImage,
         fetchData();
     }, [fetchData]);
 
-    const QuizCard = ({ quiz }) => (
-        <div className="bg-white p-5 rounded-xl border border-gray-200 hover:shadow-md transition">
-            <div className="flex justify-between items-start gap-3">
-                <div>
-                    <h3 className="text-lg font-bold text-gray-900">{quiz.title || 'Untitled Quiz'}</h3>
-                    <p className="text-sm text-gray-600 mt-1">{quiz.description || 'No description available'}</p>
-                    <div className="flex items-center gap-4 mt-3 text-sm text-gray-500">
-                        <span className="flex items-center"><FileText size={15} className="mr-1" />{quiz.total_questions || 0} Qs</span>
-                        <span className="flex items-center"><Clock size={15} className="mr-1" />{quiz.duration_minutes || 30} mins</span>
-                        <span className="flex items-center"><Trophy size={15} className="mr-1" />{quiz.total_marks || 0} marks</span>
+    const QuizCard = ({ quiz }) => {
+        const hasCompleted = attempts.some((a) => a.quiz_id === quiz.id && a.is_completed);
+        return (
+            <div className="bg-white p-5 rounded-xl border border-gray-200 hover:shadow-md transition">
+                <div className="flex justify-between items-start gap-3">
+                    <div>
+                        <h3 className="text-lg font-bold text-gray-900">{quiz.title || 'Untitled Quiz'}</h3>
+                        <p className="text-sm text-gray-600 mt-1">{quiz.description || 'No description available'}</p>
+                        <div className="flex items-center gap-4 mt-3 text-sm text-gray-500">
+                            <span className="flex items-center"><FileText size={15} className="mr-1" />{quiz.total_questions || 0} Qs</span>
+                            <span className="flex items-center"><Clock size={15} className="mr-1" />{quiz.duration_minutes || 30} mins</span>
+                            <span className="flex items-center"><Trophy size={15} className="mr-1" />{quiz.total_marks || 0} marks</span>
+                        </div>
                     </div>
+                    <button
+                        onClick={() => navigate(`/quiz/${quiz.id}/take`)}
+                        className="px-4 py-2 bg-blue-600 text-white rounded-lg hover:bg-blue-700 transition"
+                    >
+                        {hasCompleted ? 'Reattempt' : 'Start'}
+                    </button>
                 </div>
-                <button
-                    onClick={() => navigate(`/quiz/${quiz.id}/take`)}
-                    className="px-4 py-2 bg-blue-600 text-white rounded-lg hover:bg-blue-700 transition"
-                >
-                    Start
-                </button>
             </div>
-        </div>
-    );
+        );
+    };
 
     if (activeTab === 'Profile') {
         return (
@@ -4612,13 +4625,31 @@ export default function AdminDashboard() {
                     attemptAPI.getAllAttempts({ completed_only: true, limit: 300, skip: 0 }),
                 ]);
 
+                // Reduce to each student's best attempt per quiz so granted
+                // reattempts don't inflate the unique-student count or the average.
+                const bestByStudentQuiz = new Map();
+                for (const attempt of completedAttempts || []) {
+                    const studentId = attempt?.student_id;
+                    if (studentId === null || studentId === undefined) continue;
+                    const key = `${studentId}-${attempt?.quiz_id}`;
+                    const pct = Number(attempt?.percentage);
+                    const existing = bestByStudentQuiz.get(key);
+                    const existingPct = existing && Number.isFinite(Number(existing.percentage))
+                        ? Number(existing.percentage)
+                        : -Infinity;
+                    if (!existing || (Number.isFinite(pct) && pct > existingPct)) {
+                        bestByStudentQuiz.set(key, attempt);
+                    }
+                }
+                const bestAttempts = Array.from(bestByStudentQuiz.values());
+
                 const uniqueStudents = new Set(
-                    (completedAttempts || [])
+                    bestAttempts
                         .map((attempt) => attempt?.student_id)
                         .filter((studentId) => studentId !== null && studentId !== undefined)
                 ).size;
 
-                const percentages = (completedAttempts || [])
+                const percentages = bestAttempts
                     .map((attempt) => Number(attempt?.percentage))
                     .filter((value) => Number.isFinite(value));
 

@@ -219,7 +219,10 @@ class QuizAssignment(Base):
     quiz_id = Column(Integer, ForeignKey("quizzes.id"), nullable=False)
     student_id = Column(Integer, ForeignKey("users.id"), nullable=False)
     assigned_at = Column(DateTime, default=datetime.now)
-    
+    # Number of attempts this assignment permits. Each (re)assign sets this to
+    # (completed attempts so far + 1), so a reassign grants exactly one fresh attempt.
+    attempts_allowed = Column(Integer, default=1, nullable=False)
+
     # Relationships
     quiz = relationship("Quiz", backref="assignments")
     student = relationship("User", backref="assigned_quizzes")

@@ -404,17 +404,24 @@ async def check_quiz_eligibility(
             "reason": "Quiz is not active"
         }
 
-    # Students cannot reattempt submitted quizzes
+    # Students may reattempt only up to the number of attempts their current
+    # assignment permits. Each (re)assign raises attempts_allowed to (completed + 1),
+    # so a completed attempt blocks further tries until the teacher reassigns.
     if current_user.role == "student" and not is_teacher_or_admin:
-        completed_attempt = db.query(QuizAttempt).filter(
+        completed_count = db.query(QuizAttempt).filter(
             QuizAttempt.quiz_id == quiz_id,
             QuizAttempt.student_id == current_user.id,
             QuizAttempt.is_completed == True
-        ).first()
-        if completed_attempt:
+        ).count()
+        attempts_allowed = (
+            assignment.attempts_allowed
+            if assignment and assignment.attempts_allowed is not None
+            else 1
+        )
+        if completed_count >= attempts_allowed:
             return {
                 "eligible": False,
-                "reason": "You have already completed this quiz. Reattempt is not allowed."
+                "reason": "You have used all your attempts for this quiz. Ask your teacher to reassign it."
             }
     
     # Check if there's an active (incomplete) attempt
@@ -538,13 +545,24 @@ async def update_quiz(
     if assigned_student_ids is not None:
         from app.models.models import QuizAssignment
         unique_student_ids = list(dict.fromkeys(assigned_student_ids))
-        
+
         # Delete existing assignments
         db.query(QuizAssignment).filter(QuizAssignment.quiz_id == quiz_id).delete()
-        
-        # Add new assignments
+
+        # Add new assignments. Grant exactly one fresh attempt per (re)assign by
+        # setting attempts_allowed to (completed attempts so far + 1). A brand new
+        # student gets 1; a student who already completed the quiz gets one more.
         for student_id in unique_student_ids:
-            assignment = QuizAssignment(quiz_id=quiz_id, student_id=student_id)
+            completed_count = db.query(QuizAttempt).filter(
+                QuizAttempt.quiz_id == quiz_id,
+                QuizAttempt.student_id == student_id,
+                QuizAttempt.is_completed == True,
+            ).count()
+            assignment = QuizAssignment(
+                quiz_id=quiz_id,
+                student_id=student_id,
+                attempts_allowed=completed_count + 1,
+            )
             db.add(assignment)
     
     # If updating to live session, validate and calculate end time
@@ -688,48 +706,41 @@ async def get_quiz_statistics(
             detail="Not authorized to view this quiz's statistics"
         )
     
-    total_attempts = db.query(QuizAttempt).filter(
+    from app.api.v1.attempts import best_completed_attempt_ids
+
+    # Count each student once and treat their best completed attempt as
+    # authoritative, so granted reattempts never inflate counts or skew averages.
+    total_students = db.query(func.count(func.distinct(QuizAttempt.student_id))).filter(
         QuizAttempt.quiz_id == quiz_id
-    ).count()
-    
-    completed_attempts = db.query(QuizAttempt).filter(
-        QuizAttempt.quiz_id == quiz_id,
-        QuizAttempt.is_completed == True
-    ).count()
-    
-    average_score = db.query(func.avg(QuizAttempt.score)).filter(
-        QuizAttempt.quiz_id == quiz_id,
-        QuizAttempt.is_completed == True
     ).scalar() or 0
-    
-    average_percentage = db.query(func.avg(QuizAttempt.percentage)).filter(
-        QuizAttempt.quiz_id == quiz_id,
-        QuizAttempt.is_completed == True
-    ).scalar() or 0
-    
-    highest_score = db.query(func.max(QuizAttempt.score)).filter(
-        QuizAttempt.quiz_id == quiz_id,
-        QuizAttempt.is_completed == True
-    ).scalar() or 0
-    
-    lowest_score = db.query(func.min(QuizAttempt.score)).filter(
-        QuizAttempt.quiz_id == quiz_id,
-        QuizAttempt.is_completed == True,
-        QuizAttempt.score > 0
-    ).scalar() or 0
-    
+
+    best_ids = best_completed_attempt_ids(db, quiz_id=quiz_id)
+    completed_students = len(best_ids)
+    in_progress = max(0, total_students - completed_students)
+
+    if best_ids:
+        best_filter = QuizAttempt.id.in_(best_ids)
+        average_score = db.query(func.avg(QuizAttempt.score)).filter(best_filter).scalar() or 0
+        average_percentage = db.query(func.avg(QuizAttempt.percentage)).filter(best_filter).scalar() or 0
+        highest_score = db.query(func.max(QuizAttempt.score)).filter(best_filter).scalar() or 0
+        lowest_score = db.query(func.min(QuizAttempt.score)).filter(
+            best_filter, QuizAttempt.score > 0
+        ).scalar() or 0
+    else:
+        average_score = average_percentage = highest_score = lowest_score = 0
+
     return {
         "quiz_id": quiz_id,
         "quiz_title": quiz.title,
         "total_marks": quiz.total_marks,
-        "total_attempts": total_attempts,
-        "completed_attempts": completed_attempts,
-        "in_progress": total_attempts - completed_attempts,
+        "total_attempts": total_students,
+        "completed_attempts": completed_students,
+        "in_progress": in_progress,
         "average_score": round(average_score, 2),
         "average_percentage": round(average_percentage, 2),
         "highest_score": highest_score,
         "lowest_score": lowest_score,
-        "pass_rate": round((completed_attempts / total_attempts * 100), 2) if total_attempts > 0 else 0
+        "pass_rate": round((completed_students / total_students * 100), 2) if total_students > 0 else 0
     }
 
 

@@ -138,16 +138,16 @@ def _normalize_student_attempts_for_quiz(
     ).order_by(QuizAttempt.started_at.desc(), QuizAttempt.id.desc()).all()
 
     active_incomplete_attempts = []
-    has_completed_attempt = False
+    completed_attempt_count = 0
 
     for existing_attempt in student_attempts:
         if existing_attempt.is_completed:
-            has_completed_attempt = True
+            completed_attempt_count += 1
             continue
 
         if _is_attempt_expired(existing_attempt, quiz, now):
             _finalize_expired_attempt(db, existing_attempt, quiz, now)
-            has_completed_attempt = True
+            completed_attempt_count += 1
             continue
 
         active_incomplete_attempts.append(existing_attempt)
@@ -161,7 +161,7 @@ def _normalize_student_attempts_for_quiz(
         active_incomplete_attempts = active_incomplete_attempts[:1]
 
     active_attempt = active_incomplete_attempts[0] if active_incomplete_attempts else None
-    return active_attempt, has_completed_attempt
+    return active_attempt, completed_attempt_count
 
 
 def _build_attempt_sanity_flags(
@@ -208,6 +208,50 @@ def _build_attempt_sanity_flags(
 
     return flags
 
+
+def best_completed_attempt_ids(
+    db: Session,
+    quiz_id: Optional[int] = None,
+    student_id: Optional[int] = None,
+    quiz_ids: Optional[List[int]] = None,
+) -> List[int]:
+    """Return the id of the authoritative completed attempt for each (quiz, student).
+
+    After a teacher grants reattempts, a student may have several completed
+    attempts for the same quiz. Reporting treats the *best* of those (highest
+    score, ties broken by the most recent submission) as the official result
+    while every attempt is still kept as history. Restrict aggregate queries to
+    the ids returned here so reattempts don't double-count or skew averages.
+
+    Optional filters (`quiz_id`, `student_id`, `quiz_ids`) narrow the scope; the
+    ranking is per (quiz, student) and is unaffected by which subset is requested.
+    """
+    ranked = db.query(
+        QuizAttempt.id.label("attempt_id"),
+        func.row_number().over(
+            partition_by=(QuizAttempt.quiz_id, QuizAttempt.student_id),
+            order_by=(
+                func.coalesce(QuizAttempt.score, 0).desc(),
+                QuizAttempt.submitted_at.desc(),
+                QuizAttempt.id.desc(),
+            ),
+        ).label("rank"),
+    ).filter(QuizAttempt.is_completed == True)
+
+    if quiz_id is not None:
+        ranked = ranked.filter(QuizAttempt.quiz_id == quiz_id)
+    if student_id is not None:
+        ranked = ranked.filter(QuizAttempt.student_id == student_id)
+    if quiz_ids is not None:
+        if not quiz_ids:
+            return []
+        ranked = ranked.filter(QuizAttempt.quiz_id.in_(quiz_ids))
+
+    ranked_subquery = ranked.subquery()
+    rows = db.query(ranked_subquery.c.attempt_id).filter(ranked_subquery.c.rank == 1).all()
+    return [row.attempt_id for row in rows]
+
+
 @router.post("/start", response_model=QuizAttemptResponse)
 async def start_quiz_attempt(
     attempt_data: QuizAttemptStart,
@@ -229,6 +273,7 @@ async def start_quiz_attempt(
         )
 
     # Students can only start attempts for quizzes assigned to them
+    assignment = None
     if current_user.role == "student":
         from app.models.models import QuizAssignment
         assignment = db.query(QuizAssignment).filter(
@@ -267,8 +312,8 @@ async def start_quiz_attempt(
             db.query(QuizAttempt).filter(QuizAttempt.id.in_(existing_ids)).delete(synchronize_session=False)
             db.commit()
     else:
-        # For students: normalize historical data and enforce a single active/completed attempt state.
-        active_attempt, has_completed_attempt = _normalize_student_attempts_for_quiz(
+        # For students: normalize historical data and resolve active/completed state.
+        active_attempt, completed_attempt_count = _normalize_student_attempts_for_quiz(
             db=db,
             quiz=quiz,
             student_id=current_user.id,
@@ -287,10 +332,18 @@ async def start_quiz_attempt(
                     )
             return active_attempt
 
-        if has_completed_attempt:
+        # Enforce the attempt allowance recorded on the assignment. Each reassign
+        # sets attempts_allowed to (completed + 1), so it grants exactly one retry.
+        # `assignment` was resolved (and required) in the student check above.
+        attempts_allowed = (
+            assignment.attempts_allowed
+            if assignment and assignment.attempts_allowed is not None
+            else 1
+        )
+        if completed_attempt_count >= attempts_allowed:
             raise HTTPException(
                 status_code=status.HTTP_400_BAD_REQUEST,
-                detail="You have already completed this quiz. Reattempt is not allowed."
+                detail="You have used all your attempts for this quiz. Ask your teacher to reassign it."
             )
     
     # Check live session timing (only for students)
