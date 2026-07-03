@@ -306,7 +306,7 @@ VITE_API_URL=http://localhost:8000
 4. Test thoroughly
 5. Submit a pull request
 
-## License
+## License 
 
 This project is licensed under the MIT License.
 
