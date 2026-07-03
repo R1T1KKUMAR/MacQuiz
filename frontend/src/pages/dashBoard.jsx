@@ -93,6 +93,11 @@ const getDisplayUserId = (user) => {
     return `ADM-${user.id ?? 'N/A'}`;
 };
 
+const toSafeNumber = (value, fallback = 0) => {
+    const numeric = Number(value);
+    return Number.isFinite(numeric) ? numeric : fallback;
+};
+
 
 /**
  * --- UTILITY COMPONENTS ---
@@ -3671,11 +3676,6 @@ const StudentResultsView = ({ selfOnly = false }) => {
     const reviewFlagCount = bestCompletedAttempts.filter(
         (attempt) => attempt?.needs_review || (Array.isArray(attempt?.sanity_flags) && attempt.sanity_flags.length > 0)
     ).length;
-
-    const toSafeNumber = (value, fallback = 0) => {
-        const numeric = Number(value);
-        return Number.isFinite(numeric) ? numeric : fallback;
-    };
 
     const quizDurationById = useMemo(() => {
         const map = new Map();
