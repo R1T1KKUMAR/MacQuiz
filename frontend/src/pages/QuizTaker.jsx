@@ -8,6 +8,9 @@ import {
     Send, RotateCcw, Timer, FileText, X, Check, Circle
 } from 'lucide-react';
 
+// Auto-save flush window: answer changes are batched into one request per window.
+const ANSWER_AUTOSAVE_FLUSH_MS = 5000;
+
 const QuizTaker = () => {
     const { quizId } = useParams();
     const navigate = useNavigate();
@@ -519,6 +522,71 @@ const QuizTaker = () => {
         return () => clearInterval(timer);
     }, [quiz, attempt, isLoading, timeRemaining, isTeacherOrAdminUser, isServerTimeExpired]);
 
+    // Batched auto-save: keep only the latest answer per question and flush
+    // them in one request per window instead of one request per click.
+    const pendingSavesRef = useRef(new Map());
+    const saveFlushTimerRef = useRef(null);
+    const attemptIdRef = useRef(null);
+
+    useEffect(() => {
+        attemptIdRef.current = attempt?.id ?? null;
+    }, [attempt]);
+
+    const flushPendingSaves = useCallback(async ({ keepalive = false } = {}) => {
+        const attemptId = attemptIdRef.current;
+        if (saveFlushTimerRef.current) {
+            clearTimeout(saveFlushTimerRef.current);
+            saveFlushTimerRef.current = null;
+        }
+        if (!attemptId || pendingSavesRef.current.size === 0) {
+            return;
+        }
+        const batch = Array.from(pendingSavesRef.current, ([question_id, answer_text]) => ({
+            question_id,
+            answer_text,
+        }));
+        pendingSavesRef.current = new Map();
+        try {
+            await attemptAPI.saveAnswers(attemptId, batch, { keepalive });
+        } catch (err) {
+            // Re-queue entries that were not superseded while the request was in flight
+            for (const { question_id, answer_text } of batch) {
+                if (!pendingSavesRef.current.has(question_id)) {
+                    pendingSavesRef.current.set(question_id, answer_text);
+                }
+            }
+            console.error('Failed to auto-save answers:', err);
+        }
+    }, []);
+
+    const queueAnswerSave = useCallback((questionId, answerText) => {
+        pendingSavesRef.current.set(questionId, answerText);
+        if (!saveFlushTimerRef.current) {
+            saveFlushTimerRef.current = setTimeout(() => {
+                saveFlushTimerRef.current = null;
+                flushPendingSaves();
+            }, ANSWER_AUTOSAVE_FLUSH_MS);
+        }
+    }, [flushPendingSaves]);
+
+    // Flush pending answers when the tab is hidden, the page unloads,
+    // or the component unmounts, so refresh recovery stays intact.
+    useEffect(() => {
+        const flushOnHide = () => {
+            if (document.visibilityState === 'hidden') {
+                flushPendingSaves({ keepalive: true });
+            }
+        };
+        const flushOnPageHide = () => flushPendingSaves({ keepalive: true });
+        document.addEventListener('visibilitychange', flushOnHide);
+        window.addEventListener('pagehide', flushOnPageHide);
+        return () => {
+            document.removeEventListener('visibilitychange', flushOnHide);
+            window.removeEventListener('pagehide', flushOnPageHide);
+            flushPendingSaves({ keepalive: true });
+        };
+    }, [flushPendingSaves]);
+
     const handleSubmitQuiz = useCallback(async (autoSubmit = false) => {
         if (!autoSubmit && !showSubmitConfirm) {
             setShowSubmitConfirm(true);
@@ -533,6 +601,11 @@ const QuizTaker = () => {
         }
 
         setIsSubmitting(true);
+
+        // Flush unsaved answers first: if the deadline already passed, the
+        // server finalizes the attempt from auto-saved answers instead.
+        await flushPendingSaves();
+
         const formattedAnswers = Object.entries(answers).map(([questionId, answer]) => ({
             question_id: parseInt(questionId),
             answer_text: answer
@@ -554,7 +627,7 @@ const QuizTaker = () => {
         } finally {
             setIsSubmitting(false);
         }
-    }, [answers, attempt, showSubmitConfirm, error, navigate, success, clearTimerSnapshot]);
+    }, [answers, attempt, showSubmitConfirm, error, navigate, success, clearTimerSnapshot, flushPendingSaves]);
 
     // Auto-submit when timer reaches 0
     const hasAutoSubmitted = useRef(false);
@@ -609,17 +682,9 @@ const QuizTaker = () => {
             return updated;
         });
         
-        // Auto-save answer to backend (for refresh protection)
+        // Auto-save answer to backend (for refresh protection), batched
         if (attempt?.id) {
-            try {
-                await attemptAPI.saveAnswer(attempt.id, {
-                    question_id: questionId,
-                    answer_text: nextAnswer
-                });
-            } catch (err) {
-                console.error('Failed to auto-save answer:', err);
-                // Don't show error to user, just log it
-            }
+            queueAnswerSave(questionId, nextAnswer);
         }
     };
 

@@ -448,6 +448,11 @@ export const attemptAPI = {
         method: 'POST',
         body: JSON.stringify(answerData),
     }),
+    saveAnswers: (attemptId, answers, { keepalive = false } = {}) => fetchAPI(`/api/v1/attempts/${attemptId}/save-answers`, {
+        method: 'POST',
+        body: JSON.stringify({ answers }),
+        keepalive,
+    }),
     kickOutAttempt: async (attemptId) => {
         const token = localStorage.getItem('access_token');
         if (!token) {

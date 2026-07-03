@@ -13,7 +13,7 @@ from app.core.deps import get_current_active_user, require_role
 router = APIRouter()
 
 @router.post("/", response_model=UserResponse, dependencies=[Depends(require_role(["admin", "teacher"]))])
-async def create_user(
+def create_user(
     user_data: UserCreate,
     db: Session = Depends(get_db),
     current_user: User = Depends(get_current_active_user)
@@ -63,7 +63,7 @@ async def create_user(
     return db_user
 
 @router.post("/bulk-upload", dependencies=[Depends(require_role(["admin", "teacher"]))])
-async def bulk_upload_users(
+def bulk_upload_users(
     file: UploadFile = File(...),
     db: Session = Depends(get_db),
     current_user: User = Depends(get_current_active_user)
@@ -79,7 +79,7 @@ async def bulk_upload_users(
         )
     
     try:
-        contents = await file.read()
+        contents = file.file.read()
         if len(contents) > 5 * 1024 * 1024:
             raise HTTPException(
                 status_code=status.HTTP_413_REQUEST_ENTITY_TOO_LARGE,
@@ -234,7 +234,7 @@ async def bulk_upload_users(
         )
 
 @router.get("/", response_model=List[UserResponse], dependencies=[Depends(require_role(["admin", "teacher"]))])
-async def get_all_users(
+def get_all_users(
     skip: int = Query(0, ge=0),
     limit: int = Query(100, ge=1, le=300),
     role: str = None,
@@ -253,14 +253,14 @@ async def get_all_users(
     return users
 
 @router.get("/me", response_model=UserResponse)
-async def get_current_user_info(
+def get_current_user_info(
     current_user: User = Depends(get_current_active_user)
 ):
     return current_user
 
 
 @router.put("/me", response_model=UserResponse)
-async def update_current_user_info(
+def update_current_user_info(
     user_data: UserUpdate,
     db: Session = Depends(get_db),
     current_user: User = Depends(get_current_active_user)
@@ -292,7 +292,7 @@ async def update_current_user_info(
     return current_user
 
 @router.get("/{user_id}", response_model=UserResponse, dependencies=[Depends(require_role(["admin", "teacher"]))])
-async def get_user(
+def get_user(
     user_id: int,
     db: Session = Depends(get_db),
     current_user: User = Depends(get_current_active_user)
@@ -320,7 +320,7 @@ async def get_user(
     return user
 
 @router.put("/{user_id}", response_model=UserResponse, dependencies=[Depends(require_role(["admin"]))])
-async def update_user(
+def update_user(
     user_id: int,
     user_data: UserUpdate,
     db: Session = Depends(get_db),
@@ -379,7 +379,7 @@ async def update_user(
     return user
 
 @router.delete("/{user_id}", dependencies=[Depends(require_role(["admin"]))])
-async def delete_user(
+def delete_user(
     user_id: int,
     db: Session = Depends(get_db),
     current_user: User = Depends(get_current_active_user)
@@ -426,7 +426,7 @@ async def delete_user(
     return {"message": "User deleted successfully"}
 
 @router.get("/activity/teachers", response_model=List[UserActivityResponse], dependencies=[Depends(require_role(["admin"]))])
-async def get_teacher_activity(
+def get_teacher_activity(
     db: Session = Depends(get_db),
     current_user: User = Depends(get_current_active_user)
 ):
@@ -447,7 +447,7 @@ async def get_teacher_activity(
     ]
 
 @router.get("/activity/students", response_model=List[UserActivityResponse], dependencies=[Depends(require_role(["admin"]))])
-async def get_student_activity(
+def get_student_activity(
     db: Session = Depends(get_db),
     current_user: User = Depends(get_current_active_user)
 ):

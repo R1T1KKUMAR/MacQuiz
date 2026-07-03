@@ -22,7 +22,7 @@ LIVE_START_TIME_TOLERANCE_SECONDS = 0
 LIVE_ACTIVATION_PAST_TOLERANCE_SECONDS = 59
 
 @router.post("/", response_model=QuizResponse, dependencies=[Depends(require_role(["admin", "teacher"]))])
-async def create_quiz(
+def create_quiz(
     quiz_data: QuizCreate,
     db: Session = Depends(get_db),
     current_user: User = Depends(get_current_active_user)
@@ -159,7 +159,7 @@ async def create_quiz(
     return quiz_dict
 
 @router.get("/", response_model=List[QuizResponse])
-async def get_all_quizzes(
+def get_all_quizzes(
     skip: int = 0,
     limit: int = 100,
     is_active: Optional[bool] = None,
@@ -239,7 +239,7 @@ async def get_all_quizzes(
     return result
 
 @router.get("/{quiz_id}")
-async def get_quiz(
+def get_quiz(
     quiz_id: int,
     include_answers: bool = False,
     db: Session = Depends(get_db),
@@ -364,7 +364,7 @@ async def get_quiz(
 
 
 @router.get("/{quiz_id}/eligibility")
-async def check_quiz_eligibility(
+def check_quiz_eligibility(
     quiz_id: int,
     db: Session = Depends(get_db),
     current_user: User = Depends(get_current_active_user)
@@ -512,7 +512,7 @@ async def check_quiz_eligibility(
     }
 
 @router.put("/{quiz_id}", response_model=QuizResponse, dependencies=[Depends(require_role(["admin", "teacher"]))])
-async def update_quiz(
+def update_quiz(
     quiz_id: int,
     quiz_data: QuizUpdate,
     db: Session = Depends(get_db),
@@ -627,7 +627,7 @@ async def update_quiz(
     return quiz_dict
 
 @router.delete("/{quiz_id}", dependencies=[Depends(require_role(["admin", "teacher"]))])
-async def delete_quiz(
+def delete_quiz(
     quiz_id: int,
     db: Session = Depends(get_db),
     current_user: User = Depends(get_current_active_user)
@@ -678,7 +678,7 @@ async def delete_quiz(
 
 
 @router.get("/{quiz_id}/statistics")
-async def get_quiz_statistics(
+def get_quiz_statistics(
     quiz_id: int,
     db: Session = Depends(get_db),
     current_user: User = Depends(require_role(["admin", "teacher"]))
@@ -742,7 +742,7 @@ async def get_quiz_statistics(
 
 
 @router.get("/{quiz_id}/assignments")
-async def get_quiz_assignments(
+def get_quiz_assignments(
     quiz_id: int,
     db: Session = Depends(get_db),
     current_user: User = Depends(require_role(["admin", "teacher"]))
@@ -793,7 +793,7 @@ async def get_quiz_assignments(
 
 
 @router.get("/{quiz_id}/attempts")
-async def get_quiz_attempts(
+def get_quiz_attempts(
     quiz_id: int,
     db: Session = Depends(get_db),
     current_user: User = Depends(require_role(["admin", "teacher"]))

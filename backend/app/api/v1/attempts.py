@@ -7,7 +7,7 @@ from app.db.database import get_db
 from app.models.models import User, Quiz, QuizAttempt, Answer, Question
 from app.schemas.schemas import (
     QuizAttemptStart, QuizAttemptSubmit, QuizAttemptResponse,
-    DashboardStats, ActivityItem
+    AnswerProgressBatchSave, DashboardStats, ActivityItem
 )
 from app.core.deps import get_current_active_user, require_role
 
@@ -253,7 +253,7 @@ def best_completed_attempt_ids(
 
 
 @router.post("/start", response_model=QuizAttemptResponse)
-async def start_quiz_attempt(
+def start_quiz_attempt(
     attempt_data: QuizAttemptStart,
     db: Session = Depends(get_db),
     current_user: User = Depends(get_current_active_user)
@@ -405,7 +405,7 @@ async def start_quiz_attempt(
     return db_attempt
 
 @router.post("/submit", response_model=QuizAttemptResponse)
-async def submit_quiz_attempt(
+def submit_quiz_attempt(
     attempt_id: int,
     submission: QuizAttemptSubmit,
     db: Session = Depends(get_db),
@@ -540,7 +540,7 @@ async def submit_quiz_attempt(
     return attempt
 
 @router.post("/{attempt_id:int}/save-answer")
-async def save_answer_progress(
+def save_answer_progress(
     attempt_id: int,
     answer_data: dict,
     db: Session = Depends(get_db),
@@ -606,11 +606,81 @@ async def save_answer_progress(
         db.add(new_answer)
     
     db.commit()
-    
+
     return {"status": "saved" if normalized_answer else "cleared", "question_id": question_id}
 
+@router.post("/{attempt_id:int}/save-answers")
+def save_answers_progress_batch(
+    attempt_id: int,
+    payload: AnswerProgressBatchSave,
+    db: Session = Depends(get_db),
+    current_user: User = Depends(get_current_active_user)
+):
+    """
+    Save several in-progress answers in one request (batched auto-save).
+    Same semantics as /save-answer per item: blank answer_text clears the
+    saved answer. Duplicate question_ids in one payload: last write wins.
+    """
+    attempt = db.query(QuizAttempt).filter(QuizAttempt.id == attempt_id).first()
+
+    if not attempt:
+        raise HTTPException(
+            status_code=status.HTTP_404_NOT_FOUND,
+            detail="Attempt not found"
+        )
+
+    if attempt.student_id != current_user.id:
+        raise HTTPException(
+            status_code=status.HTTP_403_FORBIDDEN,
+            detail="Not your attempt"
+        )
+
+    if attempt.is_completed:
+        raise HTTPException(
+            status_code=status.HTTP_400_BAD_REQUEST,
+            detail="Cannot save answers for completed quiz"
+        )
+
+    latest = {}
+    for item in payload.answers:
+        latest[item.question_id] = (item.answer_text or "").strip()
+
+    if not latest:
+        return {"status": "ok", "saved": 0, "cleared": 0}
+
+    existing_answers = {
+        answer.question_id: answer
+        for answer in db.query(Answer).filter(
+            Answer.attempt_id == attempt_id,
+            Answer.question_id.in_(latest.keys())
+        ).all()
+    }
+
+    saved = 0
+    cleared = 0
+    for question_id, answer_text in latest.items():
+        existing_answer = existing_answers.get(question_id)
+        if existing_answer and not answer_text:
+            db.delete(existing_answer)
+            cleared += 1
+        elif existing_answer:
+            existing_answer.answer_text = answer_text
+            saved += 1
+        elif answer_text:
+            db.add(Answer(
+                attempt_id=attempt_id,
+                question_id=question_id,
+                answer_text=answer_text,
+                is_correct=False  # Will be graded on final submission
+            ))
+            saved += 1
+
+    db.commit()
+
+    return {"status": "ok", "saved": saved, "cleared": cleared}
+
 @router.get("/{attempt_id:int}/answers")
-async def get_saved_answers(
+def get_saved_answers(
     attempt_id: int,
     db: Session = Depends(get_db),
     current_user: User = Depends(get_current_active_user)
@@ -650,7 +720,7 @@ async def get_saved_answers(
 @router.api_route("/{attempt_id:int}/kick-out", methods=["POST", "GET"], dependencies=[Depends(require_role(["admin", "teacher"]))])
 @router.api_route("/kick-out/{attempt_id:int}", methods=["POST", "GET"], dependencies=[Depends(require_role(["admin", "teacher"]))])
 @router.api_route("/actions/{attempt_id:int}/kick-out", methods=["POST", "GET"], dependencies=[Depends(require_role(["admin", "teacher"]))])
-async def kick_out_live_attempt(
+def kick_out_live_attempt(
     attempt_id: int,
     db: Session = Depends(get_db),
     current_user: User = Depends(get_current_active_user)
@@ -665,7 +735,7 @@ async def kick_out_live_attempt(
 
 @router.api_route("/kick-out", methods=["POST", "GET"], dependencies=[Depends(require_role(["admin", "teacher"]))])
 @router.api_route("/actions/kick-out", methods=["POST", "GET"], dependencies=[Depends(require_role(["admin", "teacher"]))])
-async def kick_out_live_attempt_query(
+def kick_out_live_attempt_query(
     attempt_id: int = Query(..., ge=1),
     db: Session = Depends(get_db),
     current_user: User = Depends(get_current_active_user)
@@ -676,7 +746,7 @@ async def kick_out_live_attempt_query(
 
 @router.get("/kick-out-status", dependencies=[Depends(require_role(["admin", "teacher"]))])
 @router.get("/actions/kick-out-status", dependencies=[Depends(require_role(["admin", "teacher"]))])
-async def kick_out_status(
+def kick_out_status(
     current_user: User = Depends(get_current_active_user),
 ):
     """Diagnostic endpoint to confirm deployed backend includes kick-out routes."""
@@ -740,7 +810,7 @@ def _kick_out_live_attempt_internal(attempt_id: int, db: Session, current_user: 
     }
 
 @router.get("/{attempt_id:int}/remaining-time")
-async def get_remaining_time(
+def get_remaining_time(
     attempt_id: int,
     db: Session = Depends(get_db),
     current_user: User = Depends(get_current_active_user)
@@ -806,7 +876,7 @@ async def get_remaining_time(
     }
 
 @router.get("/my-attempts")
-async def get_my_attempts(
+def get_my_attempts(
     include_incomplete: bool = False,
     skip: int = Query(0, ge=0),
     limit: int = Query(100, ge=1, le=300),
@@ -886,7 +956,7 @@ async def get_my_attempts(
     return result
 
 @router.get("/all-attempts", dependencies=[Depends(require_role(["admin", "teacher"]))])
-async def get_all_attempts(
+def get_all_attempts(
     quiz_id: int = None,
     student_id: int = None,
     completed_only: bool = True,
@@ -1095,7 +1165,7 @@ async def get_all_attempts(
     return result
 
 @router.get("/quiz/{quiz_id}/attempts", response_model=List[QuizAttemptResponse], dependencies=[Depends(require_role(["admin", "teacher"]))])
-async def get_quiz_attempts(
+def get_quiz_attempts(
     quiz_id: int,
     db: Session = Depends(get_db),
     current_user: User = Depends(get_current_active_user)
@@ -1116,7 +1186,7 @@ async def get_quiz_attempts(
     return attempts
 
 @router.get("/stats/dashboard", response_model=DashboardStats, dependencies=[Depends(require_role(["admin"]))])
-async def get_dashboard_stats(
+def get_dashboard_stats(
     db: Session = Depends(get_db),
     current_user: User = Depends(get_current_active_user)
 ):
@@ -1158,7 +1228,7 @@ async def get_dashboard_stats(
     }
 
 @router.get("/stats/activity", response_model=List[ActivityItem], dependencies=[Depends(require_role(["admin"]))])
-async def get_recent_activity(
+def get_recent_activity(
     limit: int = 10,
     db: Session = Depends(get_db),
     current_user: User = Depends(get_current_active_user)
@@ -1191,7 +1261,7 @@ async def get_recent_activity(
 
 
 @router.get("/{attempt_id:int}", response_model=QuizAttemptResponse)
-async def get_attempt(
+def get_attempt(
     attempt_id: int,
     db: Session = Depends(get_db),
     current_user: User = Depends(get_current_active_user)
@@ -1281,7 +1351,7 @@ async def get_attempt(
 
 
 @router.get("/{attempt_id:int}/review")
-async def get_attempt_review(
+def get_attempt_review(
     attempt_id: int,
     db: Session = Depends(get_db),
     current_user: User = Depends(get_current_active_user)
@@ -1361,13 +1431,13 @@ async def get_attempt_review(
 
 
 @router.get("/review/{attempt_id:int}")
-async def get_attempt_review_alias(
+def get_attempt_review_alias(
     attempt_id: int,
     db: Session = Depends(get_db),
     current_user: User = Depends(get_current_active_user)
 ):
     """Alias route for attempt review download to avoid path conflicts."""
-    return await get_attempt_review(
+    return get_attempt_review(
         attempt_id=attempt_id,
         db=db,
         current_user=current_user

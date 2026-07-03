@@ -250,6 +250,13 @@ class AnswerSubmit(BaseModel):
     question_id: int
     answer_text: str
 
+class AnswerProgressSave(BaseModel):
+    question_id: int
+    answer_text: Optional[str] = None  # blank/None clears the saved answer
+
+class AnswerProgressBatchSave(BaseModel):
+    answers: List[AnswerProgressSave]
+
 class QuizAttemptStart(BaseModel):
     quiz_id: int
 

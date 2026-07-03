@@ -8,7 +8,7 @@ from app.models.models import User, RevokedToken, UserTokenBlock
 
 oauth2_scheme = OAuth2PasswordBearer(tokenUrl="/api/v1/auth/login")
 
-async def get_current_user(
+def get_current_user(
     token: str = Depends(oauth2_scheme),
     db: Session = Depends(get_db)
 ) -> User:
@@ -47,7 +47,7 @@ async def get_current_user(
     
     return user
 
-async def get_current_active_user(
+def get_current_active_user(
     current_user: User = Depends(get_current_user)
 ) -> User:
     if not current_user.is_active:
@@ -55,7 +55,7 @@ async def get_current_active_user(
     return current_user
 
 def require_role(allowed_roles: list):
-    async def role_checker(current_user: User = Depends(get_current_active_user)):
+    def role_checker(current_user: User = Depends(get_current_active_user)):
         if current_user.role not in allowed_roles:
             raise HTTPException(
                 status_code=status.HTTP_403_FORBIDDEN,

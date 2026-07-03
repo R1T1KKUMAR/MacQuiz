@@ -59,7 +59,7 @@ def _enforce_login_rate_limit(request: Request, username: str) -> None:
         )
 
 @router.post("/login", response_model=Token)
-async def login(
+def login(
     request: Request,
     form_data: OAuth2PasswordRequestForm = Depends(),
     db: Session = Depends(get_db)
@@ -99,7 +99,7 @@ async def login(
     }
 
 @router.post("/login-json", response_model=Token)
-async def login_json(
+def login_json(
     request: Request,
     login_data: LoginRequest,
     db: Session = Depends(get_db)
@@ -138,7 +138,7 @@ async def login_json(
     }
 
 @router.get("/me", response_model=UserResponse)
-async def get_current_user(
+def get_current_user(
     current_user: User = Depends(get_current_active_user)
 ):
     """
@@ -148,7 +148,7 @@ async def get_current_user(
 
 
 @router.post("/change-password")
-async def change_password(
+def change_password(
     payload: ChangePasswordRequest,
     db: Session = Depends(get_db),
     current_user: User = Depends(get_current_active_user),
@@ -183,7 +183,7 @@ async def change_password(
 
 
 @router.post("/logout")
-async def logout(
+def logout(
     token: str = Depends(oauth2_scheme),
     db: Session = Depends(get_db),
     current_user: User = Depends(get_current_active_user),
@@ -214,7 +214,7 @@ async def logout(
 
 
 @router.post("/logout-all")
-async def logout_all(
+def logout_all(
     db: Session = Depends(get_db),
     current_user: User = Depends(get_current_active_user),
 ):
@@ -231,7 +231,7 @@ async def logout_all(
 
 
 @router.post("/refresh")
-async def refresh_access_token(
+def refresh_access_token(
     db: Session = Depends(get_db),
     current_user: User = Depends(get_current_active_user),
 ):
