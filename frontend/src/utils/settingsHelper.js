@@ -46,13 +46,18 @@ export const getPlatformSettings = () => {
 
 // Get grade from percentage
 export const getGradeFromPercentage = (percentage) => {
-    const scale = getGradingScale();
-    for (let s of scale) {
-        if (percentage >= s.minPercentage && percentage <= s.maxPercentage) {
-            return s.grade;
-        }
-    }
-    return 'N/A';
+    const numeric = Number(percentage);
+    if (!Number.isFinite(numeric)) return 'N/A';
+
+    // Match on lower bounds only: a band covers [min, next band's min), so
+    // fractional scores from negative marking (e.g. 59.17%) can never fall
+    // into a gap between integer-bounded bands like C 50-59 and B 60-69.
+    const scale = [...getGradingScale()].sort((a, b) => b.minPercentage - a.minPercentage);
+    const match = scale.find((s) => numeric >= s.minPercentage);
+    if (match) return match.grade;
+
+    // Below every band (possible with negative marking): lowest grade.
+    return scale.length > 0 ? scale[scale.length - 1].grade : 'N/A';
 };
 
 // Get letter grade with color
