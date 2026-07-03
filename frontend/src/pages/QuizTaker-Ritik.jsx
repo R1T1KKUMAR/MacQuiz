@@ -179,7 +179,6 @@ const QuizTaker = () => {
                 const isTeacherOrAdmin = isTeacherOrAdminUser;
                 
                 // Check eligibility FIRST before creating attempt (skip for teachers/admins)
-                let duration = quizData.duration_minutes;
                 let timerCapDuration = quizData.duration_minutes;
                 let effectiveIsLiveSession = !!quizData?.is_live_session;
                 if (!isTeacherOrAdmin) {
@@ -207,10 +206,6 @@ const QuizTaker = () => {
                             return;
                         }
                         
-                        if (eligibilityData.duration_minutes) {
-                            duration = eligibilityData.duration_minutes;
-                        }
-
                         // Live eligibility duration is intentionally dynamic (remaining whole minutes)
                         // and should not be used as the countdown cap, otherwise reload snaps to xx:00.
                         if (!effectiveIsLiveSession && eligibilityData.duration_minutes) {

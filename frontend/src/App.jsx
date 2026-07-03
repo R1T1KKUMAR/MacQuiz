@@ -3,6 +3,7 @@ import { BrowserRouter, Routes, Route } from "react-router-dom";
 import { AuthProvider } from "./context/AuthContext";
 import { ToastProvider } from "./context/ToastContext";
 import { ProtectedRoute, PublicRoute } from "./components/ProtectedRoute";
+import Landing from "./pages/Landing";
 import Login from "./pages/login";
 import AdminDashboard from "./pages/dashBoard";
 import QuizCreator from "./pages/QuizCreator";
@@ -16,6 +17,11 @@ export default function App() {
         <ToastProvider>
           <Routes>
             <Route path="/" element={
+              <PublicRoute>
+                <Landing />
+              </PublicRoute>
+            } />
+            <Route path="/login" element={
               <PublicRoute>
                 <Login />
               </PublicRoute>

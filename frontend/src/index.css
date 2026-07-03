@@ -35,3 +35,10 @@
 	}
 	.mq-fade-up { opacity: 1; }
 }
+
+/* Smooth in-page anchor scrolling, only while the landing page is mounted */
+@media (prefers-reduced-motion: no-preference) {
+	html:has(.mq-landing) {
+		scroll-behavior: smooth;
+	}
+}
